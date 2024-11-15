@@ -31,7 +31,6 @@ const NormalPage = React.lazy(() => import('./components/NormalPage'))
 const EditPage = React.lazy(() => import('./EditPage'));
 const Begin = React.lazy(() => import('./Begin'));
 const BeginAlt = React.lazy(() => import('./BeginAlt'));
-const PageDetail = React.lazy(() => import('./PageDetail'));
 const Profile = React.lazy(() => import('./Profile'));
 const FindPage = React.lazy(() => import('./components/FindPage'));
 const RootSplitter = React.lazy(() => import('./RootSplitter'));
@@ -378,7 +377,7 @@ function App() {
                                             <>
                                                 <SimpleNav />
                                                 <NormalPage>
-                                                    <PageDetail />
+                                                <RootSplitter />
                                                 </NormalPage>
                                             </>
                                         }
