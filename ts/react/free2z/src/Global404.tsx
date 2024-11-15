@@ -92,6 +92,13 @@ export default function Global404() {
     ], []);
 
     return (
+        <div style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            right: 0,
+        }}>
         <Canvas style={{ height: "100vh", backgroundColor: "black" }}>
             <OrbitControls />
             <Stars />
@@ -106,5 +113,6 @@ export default function Global404() {
                 <Plane />
             </Physics>
         </Canvas>
+        </div>
     );
 }

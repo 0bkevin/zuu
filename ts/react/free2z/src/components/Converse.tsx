@@ -27,14 +27,7 @@ export default function Converse() {
 
     if (loading) return <LoadingBackdrop />
     if (!comment || !comment.uuid) return(
-        <div style={{
-            // use the entire screen
-            position: "absolute",
-            top: 0,
-            bottom: 0,
-            left: 0,
-            right: 0,
-        }}>
+        <div >
              <Global404 />
         </div>
     )
