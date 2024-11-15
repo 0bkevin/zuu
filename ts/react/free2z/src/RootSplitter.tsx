@@ -6,6 +6,8 @@ import PageDetail from "./PageDetail"
 // https://reactjs.org/docs/code-splitting.html
 // import Global404 from "./Global404"
 const Global404 = lazy(() => import('./Global404'))
+const NormalPage =lazy(() => import('./components/NormalPage'))
+
 
 export default function RootSplitter() {
     const [_404, set404] = useState(false)
@@ -33,7 +35,13 @@ export default function RootSplitter() {
     }
 
     if (type == "zpage") {
-        return <PageDetail />
+        return (
+        <>
+        <NormalPage>
+              <PageDetail />
+        </NormalPage>
+        </>
+        )
     }
 
     if (type == "creator") {
