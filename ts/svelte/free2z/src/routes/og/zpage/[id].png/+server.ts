@@ -2,12 +2,12 @@ import * as env from "$app/env/private";
 import { explicitArticleLanguage } from "$lib/zpage-language.js";
 import { encodeSocialPng } from "$lib/server/og-output";
 import { historicRootClientKey } from "$lib/server/historic-root-admission";
-import { plainSocialCardSummaryText as plainText } from "$lib/social-card-text";
 import { Resvg } from "@resvg/resvg-js";
 import {
   fetchCoverImage,
   selectCoverSource,
   type CoverOutcome,
+  type CoverResult,
   type OgFeaturedImage,
 } from "$lib/server/og-image";
 import {
@@ -18,7 +18,11 @@ import {
   tryAdmitOgArticleLookup,
   tryAdmitOgRender,
 } from "$lib/server/og-render-gate";
-import { wrapOgText, renderOgTextBlock } from "$lib/server/og-text";
+import {
+  buildZpageCardSvg,
+  OG_CARD_WIDTH as WIDTH,
+  type CardCover,
+} from "$lib/server/og-zpage-card";
 import type { RequestHandler } from "./$types";
 
 type OgArticle = {
@@ -96,7 +100,7 @@ function recognizeArticle(payload: unknown): OgArticle | null {
       // required on `zPageDetailSerializer`.
       //
       // PRESENCE and TYPE only, never non-emptiness: `title` may legitimately
-      // be `''` (`buildSvg` has a fallback for exactly that) and a check that
+      // be `''` (`buildZpageCardSvg` has a fallback for exactly that) and a check that
       // demanded content would 502 a real page.
       typeof article.title === "string" &&
       // `creator.username` rather than just `creator`, because `{}` is what an
@@ -113,9 +117,6 @@ function recognizeArticle(payload: unknown): OgArticle | null {
   }
   return null;
 }
-
-const WIDTH = 1200;
-const HEIGHT = 630;
 
 // See the deadline comment in the handler.
 const ARTICLE_TIMEOUT_MS = 10_000;
@@ -209,79 +210,10 @@ function logArticleRefused(
   );
 }
 
-function escapeXml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
-}
-
-function buildSvg(article: OgArticle, cover: string | null) {
-  const title = plainText(article.title, 125) || "A story on Free2Z";
-  const subtitle =
-    plainText(article.description || article.content, 190) ||
-    "Independent publishing and direct creator support.";
-  const titleLines = wrapOgText(title, cover ? 11 : 34, 3);
-  const subtitleLines = wrapOgText(subtitle, cover ? 32 : 68, 2);
-  const titleSize =
-    titleLines.length >= 3 ? 51 : titleLines.length === 2 ? 57 : 64;
-  const titleStart =
-    titleLines.length === 1 ? 270 : titleLines.length === 2 ? 245 : 225;
-  const author = escapeXml(
-    article.creator?.username
-      ? `@${article.creator.username}`
-      : "Free2Z creator",
-  );
-  const category = escapeXml(plainText(article.category, 30) || "STORY");
-  const subtitleStart = titleStart + titleLines.length * (titleSize + 9) + 30;
-  const contentText = renderOgTextBlock(
-    [
-      ...titleLines.map((text, index) => ({
-        text,
-        y: titleStart + index * (titleSize + 9),
-        size: titleSize,
-        bold: true,
-        color: "#f4f4f5",
-      })),
-      ...subtitleLines.map((text, index) => ({
-        text,
-        y: subtitleStart + index * 31,
-        size: 23,
-        color: "#d4d4d8",
-      })),
-    ],
-    { x: 74, width: cover ? 426 : 1050, language: article.actual_language },
-  );
-
-  // Keep the complete artwork inside its panel. Text is shaped and fitted to
-  // its own column from real glyph bounds, including non-Latin fallback fonts.
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}">
-    <defs>
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#09090b"/><stop offset="1" stop-color="#17171b"/></linearGradient>
-      <linearGradient id="fallbackGlow" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#84cc16" stop-opacity=".24"/><stop offset="1" stop-color="#84cc16" stop-opacity="0"/></linearGradient>
-      <pattern id="grid" width="54" height="54" patternUnits="userSpaceOnUse"><path d="M54 0H0V54" fill="none" stroke="#f4f4f5" stroke-opacity=".055"/></pattern>
-      <clipPath id="frame"><rect width="1200" height="630" rx="30"/></clipPath>
-      <style>.title{font-family:Arial,sans-serif;font-size:${titleSize}px;font-weight:700;fill:#f4f4f5;letter-spacing:-1.8px}.subtitle{font-family:Arial,sans-serif;font-size:23px;font-weight:400;fill:#d4d4d8}.meta{font-family:Arial,sans-serif;font-size:18px;font-weight:700;letter-spacing:1.8px}.small{font-family:Arial,sans-serif;font-size:18px;font-weight:600}</style>
-    </defs>
-    <g clip-path="url(#frame)">
-      <rect width="1200" height="630" fill="url(#bg)"/>
-      ${
-        cover
-          ? `<image href="${cover}" x="510" width="690" height="630" preserveAspectRatio="xMidYMid meet"/><line x1="510.5" y1="0" x2="510.5" y2="630" stroke="#f4f4f5" stroke-opacity=".12"/>`
-          : `<rect x="610" width="590" height="630" fill="url(#grid)"/><circle cx="1015" cy="180" r="230" fill="url(#fallbackGlow)"/><path d="M720 520C835 450 925 475 1095 265" fill="none" stroke="#a3e635" stroke-opacity=".45" stroke-width="3" stroke-dasharray="7 12"/>`
-      }
-      <rect x="0" width="8" height="630" fill="#a3e635"/>
-      <text x="72" y="121" font-family="Arial,sans-serif" font-size="58" font-weight="700" fill="#A3E635" letter-spacing="-2">Free2Z</text>
-      <text x="75" y="170" class="meta" fill="#a3e635">${category}</text>
-      ${contentText}
-      <line x1="76" y1="548" x2="${cover ? 500 : 520}" y2="548" stroke="#a3e635" stroke-opacity=".48"/>
-      <text x="76" y="586" class="small" fill="#f4f4f5">${author}</text>
-      <text x="1124" y="586" class="small" fill="#a3e635" text-anchor="end">FREE2Z.CASH</text>
-    </g>
-    <rect x=".5" y=".5" width="1199" height="629" rx="29.5" fill="none" stroke="#f4f4f5" stroke-opacity=".12"/>
-  </svg>`;
+function cardCover(cover: CoverResult): CardCover | null {
+  return cover.dataUri
+    ? { href: cover.dataUri, dimensions: cover.dimensions }
+    : null;
 }
 
 type RenderContext = {
@@ -546,7 +478,7 @@ async function renderZpageCard(
 
     let png: Uint8Array;
     try {
-      png = new Resvg(buildSvg(article, cover.dataUri), {
+      png = new Resvg(buildZpageCardSvg(article, cardCover(cover)), {
         fitTo: { mode: "width", value: WIDTH },
       })
         .render()
@@ -563,7 +495,7 @@ async function renderZpageCard(
       // response, so the no-store policy lets a later request try the cover again.
       outcome = "transient";
       logCoverFailure({ outcome, reason: "rasterize_failed", zpage_id: id });
-      png = new Resvg(buildSvg(article, null), {
+      png = new Resvg(buildZpageCardSvg(article, null), {
         fitTo: { mode: "width", value: WIDTH },
       })
         .render()

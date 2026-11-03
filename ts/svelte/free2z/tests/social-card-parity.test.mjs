@@ -318,7 +318,7 @@ test("the OG image URL carries a cache buster the scrapers can see", () => {
   assert.equal(url.pathname, "/og/zpage/flavored-markdown.png");
   assert.equal(
     url.searchParams.get("renderer"),
-    "5",
+    "6",
     "renderer fixes must retire cached blank cards",
   );
   assert.equal(
@@ -663,7 +663,7 @@ test("card revisions use the media-filtered text and retire old rendered cards",
   });
   const original = imageOf(variant);
 
-  assert.equal(original.searchParams.get("renderer"), "5");
+  assert.equal(original.searchParams.get("renderer"), "6");
   assert.notEqual(
     imageOf({
       ...variant,
