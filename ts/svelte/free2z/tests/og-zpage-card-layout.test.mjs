@@ -62,28 +62,31 @@ test("the layout follows the cover's real aspect ratio", () => {
 
 for (const [name, width, height, side] of [
   ["landscape", 1600, 900, "right"],
+  ["banner", 3000, 1000, "right"],
   ["square", 1000, 1000, "right"],
   ["portrait", 600, 900, "left"],
   ["tall portrait", 450, 800, "left"],
 ]) {
-  test(`${name} cover renders complete and uncropped on the ${side}`, async () => {
+  test(`${name} cover renders whole and uncropped on the ${side}`, async () => {
     const svg = buildZpageCardSvg(article, await cover(width, height));
     // The data URI is embedded exactly once, however many times it is drawn.
     assert.equal(svg.split("data:image/png").length - 1, 1);
-    const frame =
-      /<clipPath id="frameClip"><rect x="(\d+)" y="(\d+)" width="(\d+)" height="(\d+)"/.exec(
-        svg,
-      );
-    assert.ok(frame, "framed cover");
-    const [x, y, w, h] = frame.slice(1).map(Number);
-    assert.ok(Math.abs(w / h - width / height) < 0.02, "frame keeps the ratio");
-    assert.ok(side === "left" ? x < 600 - w / 2 : x > 600 - w / 2);
+    const art = /<image id="art"[^>]*width="([\d.]+)" height="([\d.]+)"/.exec(
+      svg,
+    );
+    const plate = /<use href="#art" x="([\d.]+)" y="([\d.]+)"\/>/.exec(svg);
+    assert.ok(art && plate, "cover plate");
+    const [w, h] = art.slice(1).map(Number);
+    const [x, y] = plate.slice(1).map(Number);
+    assert.ok(Math.abs(w / h - width / height) < 0.01, "plate keeps the ratio");
+    assert.ok(x >= 0 && y >= 0 && x + w <= 1200.01 && y + h <= 630.01);
+    assert.ok(side === "left" ? x + w / 2 < 600 : x + w / 2 > 600);
     const pixels = render(svg);
-    // Sample the whole frame interior: a regression in which Resvg dropped
-    // part of the framed cover (blur region as a % of an over-scaled bbox)
-    // left its lower half dark.
-    for (let sy = y + 24; sy < y + h - 24; sy += 16) {
-      for (let sx = x + 24; sx < x + w - 24; sx += 16) {
+    // Sample the whole plate, so any regression that hides part of the cover
+    // (pad, seam or clip geometry, or a Resvg quirk) fails here.
+    // The 28px seam shading at the panel's text-side edge is excluded.
+    for (let sy = Math.ceil(y) + 12; sy < y + h - 12; sy += 16) {
+      for (let sx = Math.ceil(x) + 32; sx < x + w - 32; sx += 16) {
         assert.ok(isCover(pixels, sx, sy), `cover missing at ${sx},${sy}`);
       }
     }

@@ -11,18 +11,22 @@ import {
 import type { ImageDimensions } from "$lib/server/og-image";
 
 /**
- * The zPage social card, laid out from the cover's real aspect ratio.
+ * The zPage social card, arranged from the cover's real aspect ratio.
  *
- * The author chose the cover, so the card never crops it: the framed artwork
- * keeps its intrinsic ratio and the rest of the card arranges itself around
- * that frame. The same raster, blurred and darkened, fills the background so
- * every card carries its own cover's colours while the type stays on the
- * site's dark surface tokens (globals.css `.dark`) and lime accent.
+ * The cover is shown the way `FeaturedImageFrame` shows it on the site: a
+ * full-bleed panel holding the whole image (never cropped) over a blurred,
+ * darkened enlargement of the same bytes. The panel's shape follows the
+ * cover, and the type column takes whatever is left:
  *
- *   landscape  ratio >= 1.15   text left, wide frame right, vertically centred
- *   square     0.85 .. 1.15    text left, tall square-ish frame right
- *   portrait   ratio <  0.85   poster frame left, text right with a larger title
- *   text       no cover        full-width title on the house-card backdrop
+ *   landscape  ratio >= 1.25   type left, wide panel right
+ *   square     0.85 .. 1.25    type left, square panel right
+ *   portrait   ratio <  0.85   tall panel left, wide type column right
+ *   text       no cover        a typographic poster on the dark surface
+ *
+ * Type is Inter Display / Inter (font-inter in build/free2z/web.Dockerfile)
+ * with the Noto script fallbacks behind it, on the dark tokens from
+ * src/styles/globals.css. The category chip mirrors the mono uppercase chip
+ * on `ZpageCard`.
  */
 
 export const OG_CARD_WIDTH = 1200;
@@ -44,35 +48,26 @@ export type CardArticle = {
   creator?: { username?: string };
 };
 
-// Dark-mode design tokens from src/styles/globals.css.
-const TOKENS = {
+const C = {
   bg: "#0a0a0c",
   surface: "#141417",
+  raised: "#1c1c20",
   text: "#f4f4f5",
   textSecondary: "#d4d4d8",
   textMuted: "#a1a1aa",
   accent: "#a3e635",
-  accentStrong: "#84cc16",
-  accentLight: "#bef264",
 } as const;
 
 const W = OG_CARD_WIDTH;
 const H = OG_CARD_HEIGHT;
-const PAD = 64;
-const GUTTER = 60;
-const SANS = "Arial,DejaVu Sans,sans-serif";
+const DISPLAY = "Inter Display";
+const TEXT = "Inter";
+const MONO = "DejaVu Sans Mono";
+const BRAND_FONT = `${DISPLAY},${TEXT},DejaVu Sans,sans-serif`;
+const MARGIN = 64;
 
-/** Above this, a frame wider than it is tall reads as landscape. */
-const LANDSCAPE_MIN_RATIO = 1.15;
-/** Below this, the cover is a poster and earns the left-hand column. */
+const LANDSCAPE_MIN_RATIO = 1.25;
 const PORTRAIT_MAX_RATIO = 0.85;
-/**
- * Extreme ratios still get a usable frame. Past these clamps the artwork is
- * letterboxed inside the frame (over the blurred ambient copy) rather than
- * cropped, so a 1:4 strip or a 5:1 banner is still shown complete.
- */
-const MIN_FRAME_RATIO = 0.45;
-const MAX_FRAME_RATIO = 4;
 
 type Box = { x: number; y: number; width: number; height: number };
 
@@ -86,77 +81,70 @@ function validRatio(dimensions?: ImageDimensions | null) {
 
 export function chooseCardLayout(cover: CardCover | null): CardLayout {
   if (!cover) return "text";
-  // A cover whose header we could not size is still shown; it gets the
-  // square frame, whose `meet` fit keeps any ratio complete.
+  // A cover whose header could not be sized is still shown; the square panel
+  // contains any ratio.
   const ratio = validRatio(cover.dimensions) ?? 1;
   if (ratio >= LANDSCAPE_MIN_RATIO) return "landscape";
   if (ratio < PORTRAIT_MAX_RATIO) return "portrait";
   return "square";
 }
 
-/** Size the cover frame to the artwork's own ratio inside a bounding box. */
-function frameFor(layout: CardLayout, ratio: number): Box {
-  const r = Math.min(MAX_FRAME_RATIO, Math.max(MIN_FRAME_RATIO, ratio));
-  if (layout === "portrait") {
-    const height = H - 2 * 48;
-    const width = Math.round(height * r);
-    return { x: 48, y: 48, width, height };
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+/** The full-bleed image panel. Square and portrait panels match the cover. */
+function panelFor(layout: Exclude<CardLayout, "text">, ratio: number): Box {
+  if (layout === "landscape") return { x: 560, y: 0, width: 640, height: H };
+  if (layout === "square") {
+    const width = Math.round(clamp(H * ratio, 560, 640));
+    return { x: W - width, y: 0, width, height: H };
   }
-  const maxWidth = layout === "landscape" ? 560 : 520;
-  const maxHeight = layout === "landscape" ? 470 : 486;
-  let width = maxWidth;
-  let height = width / r;
-  if (height > maxHeight) {
-    height = maxHeight;
-    width = height * r;
+  const width = Math.round(clamp(H * ratio, 300, 520));
+  return { x: 0, y: 0, width, height: H };
+}
+
+/** `contain` the cover inside the panel: every pixel visible, none cropped. */
+function plateFor(panel: Box, ratio: number): Box {
+  let width = panel.width;
+  let height = width / ratio;
+  if (height > panel.height) {
+    height = panel.height;
+    width = height * ratio;
   }
-  width = Math.round(width);
-  height = Math.round(height);
   return {
-    x: W - PAD + 8 - width,
-    y: Math.round((H - height) / 2),
+    x: panel.x + (panel.width - width) / 2,
+    y: panel.y + (panel.height - height) / 2,
     width,
     height,
   };
 }
 
-type TitleFit = { lines: string[]; size: number };
-
 /**
- * Average advance in em, used only to choose line breaks. Bold DejaVu Sans
- * (the production Latin face) averages ~0.62em; CJK, kana, Hangul and
- * full-width forms are a full em. Underestimating makes the measured block
- * shrink as a whole, summary included, so the estimate follows the script.
+ * Average advance in em, used only to choose line breaks; the text block is
+ * measured from shaped glyphs afterwards. Inter Display Bold averages ~0.55em;
+ * CJK, kana, Hangul and full-width forms take a full em.
  */
 const WIDE_TEXT =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]/gu;
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}　-〿＀-￯]/gu;
 function emFor(text: string, latinEm: number) {
-  const total = Math.max(1, text.length);
   const wide = text.match(WIDE_TEXT)?.length ?? 0;
-  return latinEm + (1.02 - latinEm) * Math.min(1, wide / total);
+  return (
+    latinEm + (1.02 - latinEm) * Math.min(1, wide / Math.max(1, text.length))
+  );
 }
 
 /**
- * Pick the largest title size whose word-wrapped lines fit the column. The
- * character estimate only chooses the break points; `renderOgTextBlock`
- * still measures shaped glyphs and shrinks the block if a line runs long.
+ * Inter covers Latin, Greek and Cyrillic. Any other script keeps the original
+ * DejaVu-first stack: putting Inter ahead of it splits shaping runs, which
+ * breaks Arabic joining in pinned Resvg 2.6.2.
  */
-function fitTitle(
-  title: string,
-  width: number,
-  sizes: readonly number[],
-  maxLines: number,
-): TitleFit {
-  const em = emFor(title, 0.62);
-  for (const size of sizes) {
-    const perLine = Math.max(6, Math.floor(width / (size * em)));
-    const lines = wrapOgText(title, perLine, maxLines + 1);
-    if (lines.length <= maxLines) return { lines, size };
-  }
-  const size = sizes[sizes.length - 1];
-  const perLine = Math.max(6, Math.floor(width / (size * em)));
-  return { lines: wrapOgText(title, perLine, maxLines), size };
-}
+const INTER_SCRIPTS =
+  /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Common}\p{Script=Inherited}]*$/u;
+const faceFor = (text: string, inter: string) =>
+  INTER_SCRIPTS.test(text) ? inter : "DejaVu Sans";
+
+const graphemeCount = (value: string) =>
+  Array.from(ogTextGraphemes.segment(value)).length;
 
 function initialOf(username: string | undefined) {
   if (!username) return "F";
@@ -167,135 +155,160 @@ function initialOf(username: string | undefined) {
   return (first || "F").toLocaleUpperCase();
 }
 
-type Column = { x: number; width: number; top: number; bottom: number };
+type Column = { x: number; width: number };
+type Typesetting = { sizes: readonly number[]; maxLines: number };
+
+const CAP = 0.73; // Inter's cap height, in em
+const SUMMARY_SIZE = 23;
+const SUMMARY_LEADING = 33;
+const CHIP_HEIGHT = 34;
 
 /**
- * Everything typographic: wordmark, category, title, summary, byline. The
- * column is the only geometry it needs, which is what lets one implementation
- * serve every layout.
+ * Brand at the top; chip, title, summary and byline stacked up from the
+ * bottom edge so the headline always lands in the same place however many
+ * lines it takes. A long headline is the story: the summary yields first.
  */
 function renderColumn(
   article: CardArticle,
   column: Column,
-  options: {
-    titleSizes: readonly number[];
-    titleLines: number;
-    subtitleLines: number;
-  },
+  { sizes, maxLines }: Typesetting,
 ) {
   const title = plainText(article.title, 125) || "A story on Free2Z";
-  const subtitle =
-    plainText(article.description || article.content, 190) ||
-    "Independent publishing and direct creator support.";
-  const category = escapeOgXml(
-    (plainText(article.category, 30) || "Story").toUpperCase(),
-  );
+  const summary = plainText(article.description || article.content, 190);
+  const category = (plainText(article.category, 24) || "Story").toUpperCase();
   const username = plainText(article.creator?.username, 28);
-  const author = escapeOgXml(username ? `@${username}` : "Free2Z creator");
-
+  const language = article.actual_language;
   const { x, width } = column;
-  const fit = fitTitle(title, width, options.titleSizes, options.titleLines);
-  const titleLeading = Math.round(fit.size * 1.14);
-  const subtitleSize = 24;
-  const subtitleLeading = 34;
-  const subtitleLines = wrapOgText(
-    subtitle,
-    Math.max(12, Math.floor(width / (subtitleSize * emFor(subtitle, 0.53)))),
-    fit.lines.length >= options.titleLines
-      ? Math.max(1, options.subtitleLines - 1)
-      : options.subtitleLines,
+
+  const brandBaseline = MARGIN + 28;
+  const bylineCenter = H - MARGIN - 22;
+  const stackBottom = bylineCenter - 22 - 44; // last baseline above the byline
+  const stackTop = brandBaseline + 56; // chip may start no higher than this
+
+  const titleEm = emFor(title, 0.55);
+  const summaryPerLine = Math.max(
+    14,
+    Math.floor(width / (SUMMARY_SIZE * emFor(summary, 0.5))),
   );
 
-  // Centre the title + summary block in the space between the masthead and
-  // the byline, measured from cap height to the last descender.
-  const gap = 26;
-  const blockHeight =
-    fit.size * 0.74 +
-    (fit.lines.length - 1) * titleLeading +
-    gap +
-    subtitleLines.length * subtitleLeading -
-    8;
-  const regionTop = column.top + 108;
-  const regionBottom = column.bottom - 96;
-  const start = Math.max(
-    regionTop,
-    regionTop + (regionBottom - regionTop - blockHeight) / 2,
+  let fit: { size: number; lines: string[]; summaryLines: string[] } | null =
+    null;
+  for (const size of sizes) {
+    const perLine = Math.max(6, Math.floor(width / (size * titleEm)));
+    const lines = wrapOgText(title, perLine, maxLines + 1);
+    if (lines.length > maxLines) continue;
+    const leading = Math.round(size * 1.08);
+    const titleHeight = size * CAP + (lines.length - 1) * leading;
+    const room = stackBottom - stackTop - CHIP_HEIGHT - 24 - titleHeight;
+    if (room < 0) continue;
+    const wanted = !summary ? 0 : Math.max(0, 3 - lines.length);
+    const count = Math.min(
+      wanted,
+      2,
+      Math.max(0, Math.floor((room - 26) / SUMMARY_LEADING) + 1),
+    );
+    fit = {
+      size,
+      lines,
+      summaryLines: count ? wrapOgText(summary, summaryPerLine, count) : [],
+    };
+    break;
+  }
+  if (!fit) {
+    const size = sizes[sizes.length - 1];
+    const perLine = Math.max(6, Math.floor(width / (size * titleEm)));
+    fit = {
+      size,
+      lines: wrapOgText(title, perLine, maxLines),
+      summaryLines: [],
+    };
+  }
+
+  const { size, lines, summaryLines } = fit;
+  const leading = Math.round(size * 1.08);
+  const lastTitleBaseline = summaryLines.length
+    ? stackBottom -
+      (summaryLines.length - 1) * SUMMARY_LEADING -
+      SUMMARY_SIZE * CAP -
+      24
+    : stackBottom;
+  const firstTitleBaseline = Math.round(
+    lastTitleBaseline - (lines.length - 1) * leading,
   );
-  const firstBaseline = Math.round(start + fit.size * 0.74);
-  const subtitleStart =
-    firstBaseline + (fit.lines.length - 1) * titleLeading + gap + 26;
+  const chipY = Math.round(firstTitleBaseline - size * CAP - 26 - CHIP_HEIGHT);
 
   const text = renderOgTextBlock(
     [
-      ...fit.lines.map((line, index) => ({
+      ...lines.map((line, index) => ({
         text: line,
-        y: firstBaseline + index * titleLeading,
-        size: fit.size,
-        bold: true,
-        color: TOKENS.text,
+        y: firstTitleBaseline + index * leading,
+        size,
+        weight: 700,
+        family: faceFor(title, DISPLAY),
+        color: C.text,
       })),
-      ...subtitleLines.map((line, index) => ({
+      ...summaryLines.map((line, index) => ({
         text: line,
-        y: subtitleStart + index * subtitleLeading,
-        size: subtitleSize,
-        color: TOKENS.textSecondary,
+        y: Math.round(
+          stackBottom - (summaryLines.length - 1 - index) * SUMMARY_LEADING,
+        ),
+        size: SUMMARY_SIZE,
+        weight: 400,
+        family: faceFor(summary, TEXT),
+        color: C.textMuted,
       })),
     ],
-    { x, width, language: article.actual_language },
+    { x, width, language },
   );
 
-  const mast = column.top;
-  const by = column.bottom;
-  const avatarCx = x + 26;
-  const avatarCy = by - 26;
+  // DejaVu Sans Mono advances exactly 0.602em, so the chip is sized without
+  // measuring. It mirrors the mono uppercase category chip on ZpageCard.
+  const chipSize = 15;
+  const tracking = 1.5;
+  const chipWidth = Math.min(
+    width,
+    Math.round(
+      graphemeCount(category) * (chipSize * 0.602 + tracking) - tracking + 32,
+    ),
+  );
+  const name = escapeOgXml(username ? `@${username}` : "Free2Z creator");
+  const avatarCx = x + 22;
+  const nameFont = ogFontFamily(language, faceFor(name, TEXT));
+
   return `
-    <text x="${x - 2}" y="${mast + 34}" font-family="${SANS}" font-size="40" font-weight="700" fill="${TOKENS.accent}" letter-spacing="-1.4">Free2Z</text>
-    <text x="${x}" y="${mast + 76}" font-family="${SANS}" font-size="15" font-weight="700" fill="${TOKENS.accent}" letter-spacing="2.6">${category}</text>
+    <text x="${x - 1}" y="${brandBaseline}" font-family="${BRAND_FONT}" font-size="36" font-weight="700" letter-spacing="-0.7" fill="${C.text}">Free<tspan fill="${C.accent}">2Z</tspan></text>
+    <rect x="${x + 0.5}" y="${chipY + 0.5}" width="${chipWidth - 1}" height="${CHIP_HEIGHT - 1}" rx="7" fill="${C.accent}" fill-opacity=".08" stroke="${C.accent}" stroke-opacity=".32"/>
+    <text x="${x + 16}" y="${chipY + 22.5}" font-family="${MONO},monospace" font-size="${chipSize}" font-weight="700" letter-spacing="${tracking}" fill="${C.accent}">${escapeOgXml(category)}</text>
     ${text}
-    <rect x="${x}" y="${by - 82}" width="${width}" height="1.5" fill="url(#accentLine)"/>
-    <circle cx="${avatarCx}" cy="${avatarCy}" r="26" fill="${TOKENS.accent}"/>
-    <text x="${avatarCx}" y="${avatarCy + 8}" text-anchor="middle" font-family="${ogFontFamily(article.actual_language)}" font-size="23" font-weight="700" fill="${TOKENS.bg}">${escapeOgXml(initialOf(username))}</text>
-    <text x="${x + 68}" y="${by - 32}" font-family="${ogFontFamily(article.actual_language)}" font-size="21" font-weight="700" fill="${TOKENS.text}">${author}</text>
-    <text x="${x + 68}" y="${by - 7}" font-family="${SANS}" font-size="15" font-weight="700" fill="${TOKENS.textMuted}" letter-spacing="1.6">FREE2Z.CASH</text>`;
+    <circle cx="${avatarCx}" cy="${bylineCenter}" r="22" fill="${C.raised}" stroke="${C.accent}" stroke-opacity=".45" stroke-width="1.5"/>
+    <text x="${avatarCx}" y="${bylineCenter + 7}" text-anchor="middle" font-family="${nameFont}" font-size="19" font-weight="700" fill="${C.accent}">${escapeOgXml(initialOf(username))}</text>
+    <text x="${x + 58}" y="${bylineCenter + 8}" font-family="${nameFont}" font-size="22" font-weight="600" fill="${C.textSecondary}">${name}</text>`;
 }
 
-function shared(defs = "") {
-  return `
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#09090b"/><stop offset=".58" stop-color="#111114"/><stop offset="1" stop-color="#17171b"/></linearGradient>
-      <linearGradient id="accentLine" x1="0" y1="0" x2="1" y2="0"><stop stop-color="${TOKENS.accent}" stop-opacity=".85"/><stop offset="1" stop-color="${TOKENS.accent}" stop-opacity="0"/></linearGradient>
-      <clipPath id="card"><rect width="${W}" height="${H}" rx="30"/></clipPath>
-      ${defs}`;
-}
-
-function wrap(defs: string, body: string) {
+function svg(defs: string, body: string) {
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-    <defs>${shared(defs)}</defs>
-    <g clip-path="url(#card)">
-      <rect width="${W}" height="${H}" fill="url(#bg)"/>
-      ${body}
-    </g>
-    <rect x=".5" y=".5" width="${W - 1}" height="${H - 1}" rx="29.5" fill="none" stroke="${TOKENS.text}" stroke-opacity=".12"/>
+    <defs>${defs}</defs>
+    <rect width="${W}" height="${H}" fill="${C.bg}"/>
+    ${body}
   </svg>`;
 }
 
 function textOnlyCard(article: CardArticle) {
   const defs = `
-      <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1010 92) rotate(132) scale(560 420)"><stop stop-color="${TOKENS.accent}" stop-opacity=".22"/><stop offset=".55" stop-color="${TOKENS.accentStrong}" stop-opacity=".06"/><stop offset="1" stop-color="${TOKENS.accentStrong}" stop-opacity="0"/></radialGradient>
-      <pattern id="grid" width="56" height="56" patternUnits="userSpaceOnUse"><path d="M56 0H0V56" fill="none" stroke="${TOKENS.text}" stroke-opacity=".045"/></pattern>
-      <linearGradient id="gridFade" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff"/></linearGradient>
-      <mask id="gridMask"><rect width="${W}" height="${H}" fill="url(#gridFade)"/></mask>`;
+      <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1080 640) scale(760 540)"><stop stop-color="${C.accent}" stop-opacity=".2"/><stop offset=".5" stop-color="${C.accent}" stop-opacity=".05"/><stop offset="1" stop-color="${C.accent}" stop-opacity="0"/></radialGradient>
+      <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.3" fill="${C.text}" fill-opacity=".09"/></pattern>
+      <linearGradient id="dotsFade" x1="0" y1="0" x2="1" y2="0"><stop offset=".35" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff"/></linearGradient>
+      <mask id="dotsMask"><rect width="${W}" height="${H}" fill="url(#dotsFade)"/></mask>`;
   const body = `
-      <rect width="${W}" height="${H}" fill="url(#grid)" mask="url(#gridMask)"/>
+      <rect width="${W}" height="${H}" fill="url(#dots)" mask="url(#dotsMask)"/>
       <rect width="${W}" height="${H}" fill="url(#glow)"/>
-      <circle cx="1018" cy="190" r="150" fill="none" stroke="${TOKENS.accent}" stroke-opacity=".16"/>
-      <path d="M900 520C980 470 1040 470 1088 330" fill="none" stroke="${TOKENS.accent}" stroke-opacity=".4" stroke-width="2.5" stroke-dasharray="6 11"/>
-      <circle cx="900" cy="520" r="5" fill="${TOKENS.accent}"/><circle cx="1088" cy="330" r="5" fill="${TOKENS.accent}"/>
+      <text x="${W + 30}" y="${H + 78}" text-anchor="end" font-family="${BRAND_FONT}" font-size="520" font-weight="800" letter-spacing="-18" fill="none" stroke="${C.accent}" stroke-opacity=".16" stroke-width="2">2Z</text>
       ${renderColumn(
         article,
-        { x: 76, width: 820, top: 62, bottom: H - 56 },
-        { titleSizes: [70, 64, 58, 52], titleLines: 3, subtitleLines: 2 },
+        { x: 72, width: 860 },
+        { sizes: [84, 76, 68, 60, 54], maxLines: 3 },
       )}`;
-  return wrap(defs, body);
+  return svg(defs, body);
 }
 
 function coverCard(
@@ -304,82 +317,62 @@ function coverCard(
   layout: Exclude<CardLayout, "text">,
 ) {
   const ratio = validRatio(cover.dimensions) ?? 1;
-  const frame = frameFor(layout, ratio);
-  const href = cover.href;
+  const panel = panelFor(layout, ratio);
+  const plate = plateFor(panel, ratio);
+  const filled =
+    plate.width >= panel.width - 1 && plate.height >= panel.height - 1;
 
   const column: Column =
     layout === "portrait"
-      ? {
-          x: frame.x + frame.width + GUTTER + 8,
-          width: W - PAD - (frame.x + frame.width + GUTTER + 8),
-          top: 62,
-          bottom: H - 56,
-        }
-      : {
-          x: 72,
-          width: frame.x - GUTTER - 72,
-          top: 62,
-          bottom: H - 56,
-        };
-  const typography =
-    layout === "portrait"
-      ? {
-          titleSizes: [64, 58, 52, 46, 42] as const,
-          titleLines: 3,
-          subtitleLines: 3,
-        }
-      : {
-          titleSizes: [54, 48, 43, 38, 34] as const,
-          titleLines: 4,
-          subtitleLines: 2,
-        };
+      ? { x: panel.width + 64, width: W - panel.width - 64 - MARGIN }
+      : { x: MARGIN + 8, width: panel.x - MARGIN - 8 - 56 };
 
-  // Darken hardest where the type sits so contrast does not depend on the
-  // cover's palette, and leave the frame side lighter so it still glows.
-  const textSide = layout === "portrait" ? 1 : 0;
-  const defs = `
-      <filter id="ambientBlur" filterUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="46"/></filter>
-      <filter id="frameShadow" x="-25%" y="-25%" width="150%" height="150%"><feDropShadow dx="0" dy="22" stdDeviation="26" flood-color="#000" flood-opacity=".55"/></filter>
-      <linearGradient id="scrim" x1="${textSide}" y1="0" x2="${1 - textSide}" y2="0"><stop stop-color="${TOKENS.bg}" stop-opacity=".94"/><stop offset=".5" stop-color="${TOKENS.bg}" stop-opacity=".82"/><stop offset="1" stop-color="${TOKENS.bg}" stop-opacity=".58"/></linearGradient>
-      <radialGradient id="frameGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(${frame.x + frame.width / 2} ${frame.y + frame.height / 2}) scale(${frame.width * 0.78} ${frame.height * 0.78})"><stop stop-color="${TOKENS.accent}" stop-opacity=".14"/><stop offset="1" stop-color="${TOKENS.accent}" stop-opacity="0"/></radialGradient>
-      <clipPath id="frameClip"><rect x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}" rx="20"/></clipPath>
-      <image id="art" href="${href}" width="${frame.width}" height="${frame.height}" preserveAspectRatio="xMidYMid meet"/>`;
-
-  // The blur region is the card in user space, never a percentage of the
-  // over-scaled ambient copy's bbox: pinned Resvg 2.6.2 mis-renders that
-  // case inside the rounded card clip and drops part of the framed cover.
-  //
-  // One embedded raster, placed twice: a cover data URI can be megabytes and
-  // this renders in a memory-bounded pod, so it is never duplicated in the
-  // SVG string. The ambient copy is scaled to over-fill the card so the blur
-  // has no transparent edge to bleed in.
-  const ambientScale = Math.max(
-    (W * 1.16) / frame.width,
-    (H * 1.16) / frame.height,
+  // One embedded raster, drawn as the plate and (only when the plate leaves
+  // gaps) as the blurred pad. A cover data URI can be megabytes on a
+  // memory-bounded pod, so it is never duplicated in the SVG string. The blur
+  // region is the panel in user space, which bounds the blur work to the
+  // panel. Do not make it a percentage of the over-scaled pad's bbox: inside
+  // a clip, pinned Resvg 2.6.2 has been seen to drop part of the image then.
+  const padScale = Math.max(
+    (panel.width * 1.2) / plate.width,
+    (panel.height * 1.2) / plate.height,
   );
-  const ambientX = (W - frame.width * ambientScale) / 2;
-  const ambientY = (H - frame.height * ambientScale) / 2;
+  const padX = panel.x + (panel.width - plate.width * padScale) / 2;
+  const padY = panel.y + (panel.height - plate.height * padScale) / 2;
+  const edgeX = layout === "portrait" ? panel.x + panel.width : panel.x;
+  const towardText = layout === "portrait" ? 1 : 0;
+  const seamWidth = 28;
+  const seamX = layout === "portrait" ? edgeX - seamWidth : edgeX;
 
-  // The portrait poster sits on a faint offset sheet, like the top print of a
-  // stack, so a narrow frame still has visual weight on the card.
-  const sheet =
-    layout === "portrait"
-      ? `<rect x="${frame.x + 16}" y="${frame.y + 12}" width="${frame.width}" height="${frame.height}" rx="20" fill="${TOKENS.surface}" fill-opacity=".7" stroke="${TOKENS.accent}" stroke-opacity=".22" transform="rotate(2.4 ${frame.x + frame.width / 2} ${frame.y + frame.height / 2})"/>`
-      : "";
+  const defs = `
+      <radialGradient id="warm" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(${column.x} 0) scale(620 460)"><stop stop-color="${C.accent}" stop-opacity=".09"/><stop offset="1" stop-color="${C.accent}" stop-opacity="0"/></radialGradient>
+      <clipPath id="panel"><rect x="${panel.x}" y="${panel.y}" width="${panel.width}" height="${panel.height}"/></clipPath>
+      <filter id="padBlur" filterUnits="userSpaceOnUse" x="${panel.x}" y="${panel.y}" width="${panel.width}" height="${panel.height}" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="38"/></filter>
+      <linearGradient id="seam" x1="${towardText}" y1="0" x2="${1 - towardText}" y2="0"><stop stop-color="${C.bg}" stop-opacity=".45"/><stop offset="1" stop-color="${C.bg}" stop-opacity="0"/></linearGradient>
+      <image id="art" href="${cover.href}" width="${plate.width.toFixed(2)}" height="${plate.height.toFixed(2)}" preserveAspectRatio="xMidYMid meet"/>`;
+
+  const pad = filled
+    ? ""
+    : `<g filter="url(#padBlur)"><use href="#art" transform="translate(${padX.toFixed(1)} ${padY.toFixed(1)}) scale(${padScale.toFixed(4)})"/></g>
+        <rect x="${panel.x}" y="${panel.y}" width="${panel.width}" height="${panel.height}" fill="${C.bg}" fill-opacity=".5"/>`;
 
   const body = `
-      <g filter="url(#ambientBlur)" opacity=".95"><use href="#art" transform="translate(${ambientX.toFixed(1)} ${ambientY.toFixed(1)}) scale(${ambientScale.toFixed(4)})"/></g>
-      <rect width="${W}" height="${H}" fill="url(#scrim)"/>
-      <rect width="${W}" height="${H}" fill="url(#frameGlow)"/>
-      ${sheet}
-      <rect x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}" rx="20" fill="${TOKENS.bg}" filter="url(#frameShadow)"/>
-      <g clip-path="url(#frameClip)">
-        <rect x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}" fill="${TOKENS.surface}"/>
-        <use href="#art" x="${frame.x}" y="${frame.y}"/>
+      <rect width="${W}" height="${H}" fill="url(#warm)"/>
+      <g clip-path="url(#panel)">
+        <rect x="${panel.x}" y="${panel.y}" width="${panel.width}" height="${panel.height}" fill="${C.surface}"/>
+        ${pad}
+        <use href="#art" x="${plate.x.toFixed(2)}" y="${plate.y.toFixed(2)}"/>
+        <rect x="${seamX}" y="0" width="${seamWidth}" height="${H}" fill="url(#seam)"/>
       </g>
-      <rect x="${frame.x + 0.75}" y="${frame.y + 0.75}" width="${frame.width - 1.5}" height="${frame.height - 1.5}" rx="19.25" fill="none" stroke="#fff" stroke-opacity=".14" stroke-width="1.5"/>
-      ${renderColumn(article, column, typography)}`;
-  return wrap(defs, body);
+      <rect x="${edgeX - 0.5}" y="0" width="1" height="${H}" fill="${C.text}" fill-opacity=".1"/>
+      ${renderColumn(article, column, {
+        sizes:
+          layout === "portrait"
+            ? [72, 66, 60, 54, 48, 44]
+            : [64, 58, 52, 47, 42, 38],
+        maxLines: 4,
+      })}`;
+  return svg(defs, body);
 }
 
 export function buildZpageCardSvg(

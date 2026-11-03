@@ -46,7 +46,7 @@ export function escapeOgXml(value: string) {
     .replaceAll("'", "&apos;");
 }
 
-export function ogFontFamily(language?: string) {
+export function ogFontFamily(language?: string, latin = "DejaVu Sans") {
   // Han has regional glyph forms. Choose from the actual content language,
   // while keeping all installed scripts available for mixed-language titles.
   const [primary, ...subtags] = (language?.toLowerCase() || "").split("-");
@@ -64,7 +64,8 @@ export function ogFontFamily(language?: string) {
         : traditionalChinese
           ? "TC"
           : "SC";
-  return `DejaVu Sans,Noto Sans CJK ${cjk},Noto Sans Arabic,Noto Sans Hebrew,Noto Sans Bengali,Noto Sans Devanagari,Noto Sans Ethiopic,Noto Sans Gujarati,Noto Sans Gurmukhi,Noto Sans Kannada,Noto Sans Khmer,Noto Sans Lao,Noto Sans Malayalam,Noto Sans Myanmar,Noto Sans Sinhala,Noto Sans Tamil,Noto Sans Telugu,Noto Sans Thai,Noto Emoji,sans-serif`;
+  const lead = latin === "DejaVu Sans" ? "" : `${latin},`;
+  return `${lead}DejaVu Sans,Noto Sans CJK ${cjk},Noto Sans Arabic,Noto Sans Hebrew,Noto Sans Bengali,Noto Sans Devanagari,Noto Sans Ethiopic,Noto Sans Gujarati,Noto Sans Gurmukhi,Noto Sans Kannada,Noto Sans Khmer,Noto Sans Lao,Noto Sans Malayalam,Noto Sans Myanmar,Noto Sans Sinhala,Noto Sans Tamil,Noto Sans Telugu,Noto Sans Thai,Noto Emoji,sans-serif`;
 }
 
 type TextLine = {
@@ -73,6 +74,9 @@ type TextLine = {
   size: number;
   bold?: boolean;
   color: string;
+  /** Preferred Latin face; script fallbacks always follow it. */
+  family?: string;
+  weight?: number;
 };
 
 /**
@@ -87,11 +91,11 @@ export function renderOgTextBlock(
   const rtl = contentLanguageDirection(language) === "rtl";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630">${lines
     .map(
-      ({ text, y, size, bold, color }) =>
+      ({ text, y, size, bold, color, family, weight }) =>
         // Resvg 2.6.2 ignores SVG direction/unicode-bidi attributes. Its text
         // shaper honors Unicode embeddings, including when a RTL line starts
         // with a Latin name. Keep these controls inside this shaping boundary.
-        `<text x="0" y="${y}" text-anchor="${rtl ? "end" : "start"}" font-family="${ogFontFamily(language)}" font-size="${size}" font-weight="${bold ? 700 : 400}" fill="${color}">${escapeOgXml(rtl ? `\u202b${text}\u202c` : text)}</text>`,
+        `<text x="0" y="${y}" text-anchor="${rtl ? "end" : "start"}" font-family="${ogFontFamily(language, family)}" font-size="${size}" font-weight="${weight ?? (bold ? 700 : 400)}" fill="${color}">${escapeOgXml(rtl ? `\u202b${text}\u202c` : text)}</text>`,
     )
     .join("")}</svg>`;
   const rendered = new Resvg(svg);

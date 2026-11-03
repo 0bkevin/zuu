@@ -2,7 +2,9 @@
 # SvelteKit is bundled into build/, so the security audit includes development
 # dependencies even though the runtime install uses --omit=dev. Native resvg
 # remains external and requires the same Alpine/musl base in both stages.
-# Explicit Noto font families support multilingual Open Graph cards.
+# Explicit Noto font families support multilingual Open Graph cards. zPage
+# cards set titles in Inter Display and text in Inter (og-zpage-card.ts); only
+# the static-instance Inter.ttc is copied, so each weight selects a real face.
 FROM node:24.22.2-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS og-fonts
 # Alpine 3.24 security floors: CVE-2026-107891 (musl) and CVE-2026-85091
 # (zlib). Keep build and runtime on the same patched native libraries.
@@ -11,14 +13,15 @@ RUN apk add --no-cache 'ca-certificates>=20261020-r0' 'musl>=1.2.6-r3' 'musl-uti
     font-noto-bengali font-noto-devanagari font-noto-ethiopic font-noto-gujarati \
     font-noto-gurmukhi font-noto-kannada font-noto-khmer font-noto-lao \
     font-noto-malayalam font-noto-myanmar font-noto-sinhala font-noto-tamil \
-    font-noto-telugu font-noto-thai \
+    font-noto-telugu font-noto-thai font-inter \
     && mkdir /og-fonts \
     && for script in Arabic Hebrew Bengali Devanagari Ethiopic Gujarati Gurmukhi Kannada Khmer Lao Malayalam Myanmar Sinhala Tamil Telugu Thai; do \
       for weight in Regular Bold; do \
         cp "/usr/share/fonts/noto/NotoSans${script}-${weight}.ttf" /og-fonts/; \
       done; \
     done \
-    && cp /usr/share/fonts/noto/NotoSansCJK-Regular.ttc /usr/share/fonts/noto/NotoSansCJK-Bold.ttc /og-fonts/
+    && cp /usr/share/fonts/noto/NotoSansCJK-Regular.ttc /usr/share/fonts/noto/NotoSansCJK-Bold.ttc /og-fonts/ \
+    && cp /usr/share/fonts/inter/Inter.ttc /og-fonts/
 
 # Alpine's emoji package is a bitmap color font; Resvg needs outlines. Pin the
 # small upstream monochrome font and its license by commit and checksum.
