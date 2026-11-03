@@ -2,7 +2,6 @@
   import { formatDate } from "$lib/utils/date";
   import { onMount } from "svelte";
   import * as env from "$app/env/public";
-  import { Radio, Ticket, Users } from "@lucide/svelte";
   import { dytePublicDiscoveryList } from "$lib/api/dyte/dyte";
   import type { PublicMeetingList } from "$lib/api/f2z.schemas";
   import { locale, tStore as t } from "$lib/i18n";
@@ -262,107 +261,79 @@
       class="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8"
       aria-labelledby="homepage-live-now-heading"
     >
-      <div
-        class="glass-card overflow-hidden rounded-2xl border border-red-500/20 bg-red-500/[0.03] p-4 sm:p-6"
-      >
-        <div class="mb-4 flex items-center justify-between gap-4">
-          <div class="flex min-w-0 items-center gap-3">
-            <span class="relative flex size-2 shrink-0">
-              <span
-                class="absolute inline-flex size-full animate-ping rounded-full bg-red-500 opacity-60"
-              ></span>
-              <span class="relative inline-flex size-2 rounded-full bg-red-500"
-              ></span>
-            </span>
-            <h2
-              id="homepage-live-now-heading"
-              class="text-lg font-black tracking-tight sm:text-xl"
-            >
-              {$t("homepage.liveNow", "Live Now")}
-            </h2>
-          </div>
-          <span
-            class="shrink-0 font-mono text-[10px] font-bold tracking-widest text-red-500 uppercase"
-            >{$t("stream.live", "LIVE")}</span
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
+        <h2
+          id="homepage-live-now-heading"
+          class="flex shrink-0 items-center gap-2 font-mono text-xs font-bold tracking-widest text-red-500 uppercase"
+        >
+          <span class="relative flex size-2 shrink-0" aria-hidden="true">
+            <span
+              class="absolute inline-flex size-full animate-ping rounded-full bg-red-500 opacity-60 motion-reduce:hidden"
+            ></span>
+            <span class="relative inline-flex size-2 rounded-full bg-red-500"
+            ></span>
+          </span>
+          {$t("homepage.liveNow", "Live Now")}
+          <span class="font-normal text-muted-foreground"
+            >· {liveNow.results.length}</span
           >
-        </div>
+        </h2>
 
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul
+          class="-mx-4 flex min-w-0 [scrollbar-width:none] gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"
+        >
           {#each liveNow.results as stream (stream.username + ":" + stream.meeting_type)}
-            <a
-              data-testid="homepage-live-now-card"
-              href={streamWatchPath(stream.username, stream.meeting_type)}
-              class="group flex min-w-0 items-center gap-3 rounded-xl border border-border/60 bg-background/60 p-3 transition-colors hover:border-red-500/50 hover:bg-background"
-              aria-label={$t(
-                "homepage.watchLiveStream",
-                "Watch {username}'s {type} stream",
-                {
-                  username: stream.username,
-                  type: liveTypeName(stream.meeting_type),
-                },
-              )}
-            >
-              <div
-                class="grid size-12 shrink-0 place-items-center overflow-hidden rounded-full border border-red-500/30 bg-muted"
+            <li class="shrink-0">
+              <a
+                data-testid="homepage-live-now-card"
+                href={streamWatchPath(stream.username, stream.meeting_type)}
+                class="group flex items-center gap-2.5 rounded-full border border-border/60 bg-background/40 py-1.5 pr-4 pl-1.5 transition-colors hover:border-red-500/40 hover:bg-background/80 focus-visible:ring-2 focus-visible:ring-red-500/60 focus-visible:outline-none"
+                aria-label={$t(
+                  "homepage.watchLiveStream",
+                  "Watch {username}'s {type} stream",
+                  {
+                    username: stream.username,
+                    type: liveTypeName(stream.meeting_type),
+                  },
+                )}
               >
-                {#if buildImageUrl(stream.avatar)}
-                  <img
-                    src={buildImageUrl(stream.avatar)}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    class="size-full object-cover"
-                  />
-                {:else}
-                  <span class="text-sm font-bold text-muted-foreground"
-                    >{stream.username?.slice(0, 2).toUpperCase()}</span
-                  >
-                {/if}
-              </div>
-
-              <div class="min-w-0 flex-1">
-                <div class="flex min-w-0 items-center gap-2">
-                  <span class="min-w-0 font-bold break-words"
-                    >@{stream.username}</span
-                  >
-                  <span
-                    class="relative inline-flex shrink-0 items-center rounded-md bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white"
-                  >
-                    <span class="relative mr-1 flex size-1.5">
-                      <span
-                        class="absolute inline-flex size-full animate-ping rounded-full bg-white opacity-75"
-                      ></span>
-                      <span
-                        class="relative inline-flex size-1.5 rounded-full bg-white"
-                      ></span>
-                    </span>
-                    {$t("stream.live", "LIVE")}
-                  </span>
-                </div>
-                <div
-                  class="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+                <span
+                  class="grid size-7 shrink-0 place-items-center overflow-hidden rounded-full bg-muted ring-2 ring-red-500 ring-offset-2 ring-offset-background"
+                >
+                  {#if buildImageUrl(stream.avatar)}
+                    <img
+                      src={buildImageUrl(stream.avatar)}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      class="size-full object-cover"
+                    />
+                  {:else}
+                    <span class="text-[10px] font-bold text-muted-foreground"
+                      >{stream.username?.slice(0, 2).toUpperCase()}</span
+                    >
+                  {/if}
+                </span>
+                <span class="text-sm font-semibold whitespace-nowrap"
+                  >{stream.username}</span
+                >
+                <span
+                  class="text-xs whitespace-nowrap text-muted-foreground transition-colors group-hover:text-foreground/70"
                 >
                   {#if stream.meeting_type === "broadcast"}
-                    <Radio class="size-3.5 shrink-0" aria-hidden="true" />
-                    <span>{$t("homepage.liveModeFree", "Free")}</span>
+                    {$t("homepage.liveModeFree", "Free")}
                   {:else if stream.meeting_type === "subscribers-only"}
-                    <Users class="size-3.5 shrink-0" aria-hidden="true" />
-                    <span
-                      >{$t("homepage.liveModeSubscribers", "Subscribers")}</span
-                    >
+                    {$t("homepage.liveModeSubscribers", "Subscribers")}
                   {:else}
-                    <Ticket class="size-3.5 shrink-0" aria-hidden="true" />
-                    <span>
-                      {$t("stream.pricePerMinuteShort", "{amount} 2Z/min", {
-                        amount: livePrice(stream.price_per_minute),
-                      })}
-                    </span>
+                    {$t("stream.pricePerMinuteShort", "{amount} 2Z/min", {
+                      amount: livePrice(stream.price_per_minute),
+                    })}
                   {/if}
-                </div>
-              </div>
-            </a>
+                </span>
+              </a>
+            </li>
           {/each}
-        </div>
+        </ul>
       </div>
     </section>
   {/if}
