@@ -175,7 +175,7 @@ function buildImage(article?: ZPageDetail | null) {
   const language = explicitArticleLanguage(article.actual_language);
   const languageQuery = language ? `&lang=${encodeURIComponent(language)}` : "";
   return toAbsoluteUrl(
-    `/og/zpage/${encodeURIComponent(identifier)}.png?v=${version}&renderer=5&text=${cardTextRevision(article)}${languageQuery}`,
+    `/og/zpage/${encodeURIComponent(identifier)}.png?v=${version}&renderer=6&text=${cardTextRevision(article)}${languageQuery}`,
     canonicalBaseUrl,
   );
 }

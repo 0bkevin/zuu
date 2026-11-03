@@ -296,6 +296,13 @@ export type CoverOutcome = "ok" | "absent" | "permanent" | "transient";
 export type CoverResult = {
   dataUri: string | null;
   outcome: CoverOutcome;
+  /**
+   * The cover's intrinsic size, read from its container header before any
+   * decode. Present exactly when `dataUri` is: the card chooses its layout
+   * (landscape, square, portrait) from this ratio, so it must describe the
+   * same raster that is embedded.
+   */
+  dimensions?: ImageDimensions;
   /** Short, non-user-controlled tag for logs. Never a URL. */
   reason?: string;
   /** Upstream HTTP status, when there was one. */
@@ -335,7 +342,13 @@ type ImageFetchFailure = Omit<CoverResult, "outcome" | "dataUri"> & {
   dataUri: null;
 };
 export type ImageBytesResult =
-  ImageFetchFailure | { outcome: "ok"; bytes: Uint8Array; type: string };
+  | ImageFetchFailure
+  | {
+      outcome: "ok";
+      bytes: Uint8Array;
+      type: string;
+      dimensions: ImageDimensions;
+    };
 
 const absent = (reason: string): ImageFetchFailure => ({
   dataUri: null,
@@ -717,7 +730,7 @@ export async function fetchImageBytes(
       : failed("transient", "incomplete_image_data");
   }
 
-  return { outcome: "ok", bytes, type };
+  return { outcome: "ok", bytes, type, dimensions: size };
 }
 
 export async function fetchCoverImage(
@@ -727,7 +740,7 @@ export async function fetchCoverImage(
 ): Promise<CoverResult> {
   const result = await fetchImageBytes(fetch, source, base);
   if (result.outcome !== "ok") return result;
-  const { bytes, type } = result;
+  const { bytes, type, dimensions } = result;
 
   // Resvg accepts PNG/JPEG but silently omits WebP images. The generated
   // cover ladder is WebP, so a successful fetch alone cannot mean a visible
@@ -744,6 +757,7 @@ export async function fetchCoverImage(
       return {
         dataUri: `data:image/png;base64,${png.toString("base64")}`,
         outcome: "ok",
+        dimensions,
       };
     } catch {
       // A decoder failure can also be resource pressure. Keep the existing
@@ -764,5 +778,6 @@ export async function fetchCoverImage(
       bytes.byteLength,
     ).toString("base64")}`,
     outcome: "ok",
+    dimensions,
   };
 }
