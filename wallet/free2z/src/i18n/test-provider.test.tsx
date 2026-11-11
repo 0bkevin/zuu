@@ -30,4 +30,36 @@ describe("test i18n provider parity", () => {
       "Réessayez.",
     );
   });
+
+  it.each(["en", "es", "fr"] as const)(
+    "formats every follow message in %s",
+    (locale) => {
+      const instance = createTestI18n(locale);
+      const keys = [
+        MESSAGE_KEYS.creatorFollowAction,
+        MESSAGE_KEYS.creatorFollowAccessible,
+        MESSAGE_KEYS.creatorFollowLoading,
+        MESSAGE_KEYS.creatorFollowFollowing,
+        MESSAGE_KEYS.creatorFollowUnfollow,
+        MESSAGE_KEYS.creatorFollowRetry,
+        MESSAGE_KEYS.creatorFollowUnavailable,
+        MESSAGE_KEYS.creatorFollowReadError,
+        MESSAGE_KEYS.creatorFollowMutationError,
+        MESSAGE_KEYS.creatorFollowRecorded,
+        MESSAGE_KEYS.creatorFollowSuccess,
+        MESSAGE_KEYS.creatorUnfollowSuccess,
+      ];
+      for (const key of keys) {
+        const result = instance.t(key, { name: "Alice" });
+        expect(result).not.toBe(key);
+        expect(result).not.toContain("{name}");
+      }
+      expect(
+        instance.t(MESSAGE_KEYS.creatorFollowAccessible, { name: "Alice" }),
+      ).toContain("Alice");
+      expect(
+        instance.t(MESSAGE_KEYS.creatorFollowUnfollow, { name: "Alice" }),
+      ).toContain("Alice");
+    },
+  );
 });

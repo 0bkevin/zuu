@@ -3,7 +3,13 @@ import {
   ModerationControls,
 } from "@/features/moderation/Moderation";
 import { useLiveGate } from "./useLiveGate";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
@@ -39,6 +45,7 @@ import { Markdown } from "@/components/common/Markdown";
 import { RemoteMedia } from "@/components/common/RemoteMedia";
 import { SectionLoadError } from "@/components/common/SectionLoadError";
 import { discover, tuzi } from "@/lib/api/free2z";
+import { getTokenSnapshot, onTokenChange } from "@/lib/api/http";
 import {
   formatTuzis,
   formatZecDisplay,
@@ -425,30 +432,30 @@ export function SubscribeButton({
   const adjustTuzis = useSession((s) => s.adjustTuzis);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  // Set the instant `subscribe()` succeeds so the button reflects the new
-  // state immediately, even before `reloadSubscriptions` below lands (and
-  // even if that refetch fails) — see the comment on `tuzi.mySubscriptions`
-  // for why this is the only backend source of subscription status.
+  // The target-specific status read confirms the membership before the
+  // paginated subscriptions list is refreshed.
   const [justSubscribed, setJustSubscribed] = useState<Subscription | null>(
     null,
   );
-  // Cancelling / resuming only flips auto-renew server-side (DELETE sets
-  // `max_price` to 0; a fresh POST restores it) — the membership ROW lives on
-  // until `expires`, so `mySubscriptions` keeps returning it either way. These
-  // two optimistic overrides let the dialog reflect the user's latest action
-  // instantly, before the background `reloadSubscriptions` refetch lands.
+  // Cancelling sets max_price to zero while access remains until expiry.
+  // The override reflects a confirmed cancellation until the list refreshes.
   const [renewOverride, setRenewOverride] = useState<boolean | null>(null);
-  // For a free follow there's no "access until expires" — unfollowing should
-  // remove the follow outright. But the backend/mock keeps the row (DELETE only
-  // stops renewal), so we track the unfollow intent locally to drop the follow
-  // from the UI immediately and keep it dropped across the refetch.
-  const [unfollowed, setUnfollowed] = useState(false);
+  const [membershipNeedsRefresh, setMembershipNeedsRefresh] = useState(false);
   const [freeFollowing, setFreeFollowing] = useState<boolean | null>(null);
   const [freeFollowBusy, setFreeFollowBusy] = useState(false);
   const [freeFollowNeedsRead, setFreeFollowNeedsRead] = useState(false);
   const [freeFollowReadFailed, setFreeFollowReadFailed] = useState(false);
   const freeGeneration = useRef(0);
+  const freeInFlight = useRef(false);
+  const tokenGeneration = useSyncExternalStore(
+    onTokenChange,
+    () => getTokenSnapshot().generation,
+    () => 0,
+  );
   const freeIdentity = `${creator.username.toLowerCase()}:${user?.username.toLowerCase() ?? "anonymous"}`;
+  const freeViewKey = `${freeIdentity}:${tokenGeneration}`;
+  const [freeStateKey, setFreeStateKey] = useState(freeViewKey);
+  const previousViewKey = useRef(freeViewKey);
   const freeIdentityRef = useRef(freeIdentity);
   freeIdentityRef.current = freeIdentity;
 
@@ -474,11 +481,28 @@ export function SubscribeButton({
   useEffect(() => {
     const generation = ++freeGeneration.current;
     const identity = freeIdentity;
-    const isCurrent = () => freeGeneration.current === generation;
+    const isCurrent = () =>
+      freeGeneration.current === generation &&
+      getTokenSnapshot().generation === tokenGeneration &&
+      (useSession.getState().user?.username ?? "").toLowerCase() ===
+        (user?.username ?? "").toLowerCase();
+    if (previousViewKey.current !== freeViewKey) {
+      setBusy(false);
+      setOpen(false);
+      previousViewKey.current = freeViewKey;
+    }
+    freeInFlight.current = false;
+    setFreeStateKey(freeViewKey);
+    setFreeFollowBusy(false);
+    setFreeFollowNeedsRead(false);
+    setFreeFollowReadFailed(false);
+    setJustSubscribed(null);
+    setRenewOverride(null);
+    setMembershipNeedsRefresh(false);
     if (user && freeTier) {
       setFreeFollowing(null);
       void tuzi
-        .creatorFollow(creator.username, "state")
+        .creatorFollow(creator.username, "state", user.username)
         .then((following) => {
           if (isCurrent() && freeIdentityRef.current === identity)
             setFreeFollowing(following);
@@ -496,7 +520,14 @@ export function SubscribeButton({
     return () => {
       freeGeneration.current += 1;
     };
-  }, [creator.username, freeIdentity, freeTier, user?.username]);
+  }, [
+    creator.username,
+    freeIdentity,
+    freeViewKey,
+    freeTier,
+    user?.username,
+    tokenGeneration,
+  ]);
   const gate = paidActionGate({
     sessionLoading,
     user,
@@ -521,12 +552,10 @@ export function SubscribeButton({
   const remoteSub = subscriptions?.find(
     (s) => s.star.username.toLowerCase() === creator.username.toLowerCase(),
   );
-  const sub = remoteSub ?? justSubscribed;
-  const subscribed = unfollowed ? false : Boolean(sub);
-  // `max_price === 0` means the fan cancelled auto-renew (DELETE
-  // /api/tuzis/subscribe/{username}) — access still runs to `expires`, it
-  // just won't recur. `renewOverride` reflects a just-issued cancel/resume
-  // before the refetch confirms it.
+  const sub = justSubscribed ?? remoteSub;
+  const subscribed = Boolean(sub);
+  // `max_price === 0` means the fan cancelled auto-renew; access continues
+  // to `expires`. The override reflects a cancellation before the refetch.
   const renewing =
     renewOverride ?? (sub ? Number(sub.max_price ?? 0) > 0 : true);
 
@@ -535,19 +564,29 @@ export function SubscribeButton({
       signInToSubscribe();
       return;
     }
-    if (freeFollowing === null) return;
+    if (freeFollowing === null || freeInFlight.current) return;
     const generation = freeGeneration.current;
-    const isCurrent = () => freeGeneration.current === generation;
+    const isCurrent = () =>
+      freeGeneration.current === generation &&
+      getTokenSnapshot().generation === tokenGeneration &&
+      (useSession.getState().user?.username ?? "").toLowerCase() ===
+        (user?.username ?? "").toLowerCase();
     const identity = freeIdentity;
+    freeInFlight.current = true;
     setFreeFollowBusy(true);
     try {
       await tuzi.creatorFollow(
         creator.username,
         freeFollowing ? "unfollow" : "follow",
+        user.username,
       );
       if (!isCurrent() || freeIdentityRef.current !== identity) return;
       try {
-        const following = await tuzi.creatorFollow(creator.username, "state");
+        const following = await tuzi.creatorFollow(
+          creator.username,
+          "state",
+          user.username,
+        );
         if (!isCurrent() || freeIdentityRef.current !== identity) return;
         setFreeFollowing(following);
         setFreeFollowNeedsRead(false);
@@ -568,18 +607,31 @@ export function SubscribeButton({
       if (!isCurrent() || freeIdentityRef.current !== identity) return;
       toast.error(t(MESSAGE_KEYS.creatorFollowMutationError));
     } finally {
-      if (isCurrent() && freeIdentityRef.current === identity)
+      if (isCurrent() && freeIdentityRef.current === identity) {
+        freeInFlight.current = false;
         setFreeFollowBusy(false);
+      }
     }
   }
 
   async function refreshFreeFollow() {
+    if (!user) return;
     const generation = freeGeneration.current;
-    const isCurrent = () => freeGeneration.current === generation;
+    if (freeInFlight.current) return;
+    const isCurrent = () =>
+      freeGeneration.current === generation &&
+      getTokenSnapshot().generation === tokenGeneration &&
+      (useSession.getState().user?.username ?? "").toLowerCase() ===
+        (user?.username ?? "").toLowerCase();
     const identity = freeIdentity;
+    freeInFlight.current = true;
     setFreeFollowBusy(true);
     try {
-      const following = await tuzi.creatorFollow(creator.username, "state");
+      const following = await tuzi.creatorFollow(
+        creator.username,
+        "state",
+        user.username,
+      );
       if (!isCurrent() || freeIdentityRef.current !== identity) return;
       setFreeFollowing(following);
       setFreeFollowNeedsRead(false);
@@ -588,83 +640,121 @@ export function SubscribeButton({
       if (isCurrent() && freeIdentityRef.current === identity)
         toast.error(t(MESSAGE_KEYS.creatorFollowReadError));
     } finally {
-      if (isCurrent() && freeIdentityRef.current === identity)
+      if (isCurrent() && freeIdentityRef.current === identity) {
+        freeInFlight.current = false;
         setFreeFollowBusy(false);
+      }
     }
   }
 
-  // A fresh subscribe and a resume-renewal are the same backend call — POST
-  // /api/tuzis/subscribe/{username} get-or-creates the membership and (re)sets
-  // renewal at the current price — so they share one runner and differ only in
-  // the copy and whether the dialog stays open to show the flipped state.
-  async function runSubscribe(mode: "subscribe" | "resume") {
+  // POST creates or extends a membership. Existing memberships retain their
+  // renewal ceiling, including zero after cancellation.
+  async function runSubscribe(mode: "subscribe" | "extend") {
     const currentUser = useSession.getState().user;
     if (!currentUser || gate === "sign-in") {
       signInToSubscribe();
       return;
     }
     if (gate !== "ready") return;
+    const generation = freeGeneration.current;
+    const identity = freeIdentity;
+    const isCurrent = () =>
+      freeGeneration.current === generation &&
+      freeIdentityRef.current === identity &&
+      getTokenSnapshot().generation === tokenGeneration &&
+      (useSession.getState().user?.username ?? "").toLowerCase() ===
+        currentUser.username.toLowerCase();
     setBusy(true);
     try {
       await tuzi.subscribe(creator.username);
+      if (!isCurrent()) return;
       // Debit only after the POST succeeds, and only for a paid tier — never
       // credit/debit on failure.
       if (price > 0) adjustTuzis(-price);
-      const expires = new Date(Date.now() + 30 * 86400000).toISOString();
-      setUnfollowed(false);
-      if (mode === "resume") setRenewOverride(true);
+      let status;
+      try {
+        status = await tuzi.subscriptionStatus(creator.username);
+        if (!isCurrent()) return;
+      } catch {
+        if (!isCurrent()) return;
+        setMembershipNeedsRefresh(true);
+        setOpen(false);
+        toast.error(
+          "Your membership request was recorded, but its status could not be refreshed. Reload this page before making another request.",
+        );
+        return;
+      }
+      if (!status.active || !status.expires || status.max_price === null) {
+        setMembershipNeedsRefresh(true);
+        setOpen(false);
+        toast.error(
+          "Your membership request was recorded, but its current status could not be confirmed. Reload this page before making another request.",
+        );
+        return;
+      }
+      setRenewOverride(null);
       setJustSubscribed({
         fan: {
           username: currentUser.username,
           free2zaddr: currentUser.free2zaddr ?? currentUser.username,
         },
         star: { username: creator.username, free2zaddr: creator.free2zaddr },
-        expires,
-        max_price: String(price),
+        expires: status.expires,
+        max_price: status.max_price,
       });
-      if (mode === "resume") {
-        toast.success(`Auto-renew resumed for ${name}`, {
+      if (mode === "extend") {
+        toast.success(`Membership updated for ${name}`, {
           description:
-            price > 0
-              ? `Your membership renews monthly · ${formatTuzis(price)}.`
-              : `Your membership will keep renewing.`,
+            Number(status.max_price) > 0
+              ? "Auto-renew is enabled, subject to your renewal ceiling."
+              : "Auto-renew remains off.",
         });
-        // Keep the dialog open so it re-renders into the resumed state.
+        // Keep the dialog open to show the confirmed renewal state.
       } else {
         toast.success(`Subscribed to ${name}`, {
           description:
-            price > 0
-              ? `Renews monthly · ${formatTuzis(price)}. You've unlocked ${name}'s subscriber posts and livestreams.`
-              : `You've unlocked ${name}'s subscriber posts and livestreams.`,
+            Number(status.max_price) > 0
+              ? "Your membership includes subscriber access. Auto-renew is enabled, subject to your renewal ceiling."
+              : "Your membership includes subscriber access. Auto-renew is off.",
         });
         setOpen(false);
       }
       void reloadSubscriptions();
     } catch {
+      if (!isCurrent()) return;
       toast.error(
-        mode === "resume"
-          ? "Couldn't resume auto-renew. Please try again."
+        mode === "extend"
+          ? "Couldn't extend the membership. Please try again."
           : "Couldn't complete the subscription. Please try again.",
       );
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
   const subscribe = () => runSubscribe("subscribe");
-  const resumeRenewal = () => runSubscribe("resume");
+  const extendMembership = () => runSubscribe("extend");
 
   // Paid tier: cancel auto-renew. Access continues to `expires`; only renewal
-  // stops. The dialog stays open so it re-renders into the "Resume renewal"
-  // state.
+  // stops. The dialog stays open so it displays the updated state.
   async function cancelRenewal() {
-    if (!useSession.getState().user) {
+    const currentUser = useSession.getState().user;
+    if (!currentUser) {
       signInToSubscribe();
       return;
     }
+    const generation = freeGeneration.current;
+    const identity = freeIdentity;
+    const isCurrent = () =>
+      freeGeneration.current === generation &&
+      freeIdentityRef.current === identity &&
+      getTokenSnapshot().generation === tokenGeneration &&
+      (useSession.getState().user?.username ?? "").toLowerCase() ===
+        currentUser.username.toLowerCase();
     setBusy(true);
     try {
       await tuzi.unsubscribe(creator.username);
+      if (!isCurrent()) return;
       setRenewOverride(false);
       setJustSubscribed(null);
       toast.success("Membership won't renew", {
@@ -674,9 +764,10 @@ export function SubscribeButton({
       });
       void reloadSubscriptions();
     } catch {
+      if (!isCurrent()) return;
       toast.error("Couldn't update your membership. Please try again.");
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }
 
@@ -692,25 +783,39 @@ export function SubscribeButton({
     );
   }
 
+  if (membershipNeedsRefresh && !freeTier) {
+    return <Button disabled>Reload to check membership status</Button>;
+  }
+
   if (freeTier) {
+    if (sessionLoading || (user && freeStateKey !== freeViewKey)) {
+      return (
+        <Button variant="secondary" disabled>
+          {t(MESSAGE_KEYS.creatorFollowLoading)}
+        </Button>
+      );
+    }
     if (!user)
       return (
         <Button
           onClick={signInToSubscribe}
-          aria-label={`${t(MESSAGE_KEYS.creatorFollowAction)} ${name}`}
+          aria-label={t(MESSAGE_KEYS.creatorFollowAccessible, { name })}
         >
           {t(MESSAGE_KEYS.creatorFollowAction)}
         </Button>
       );
     if (freeFollowReadFailed)
       return (
-        <Button
-          variant="secondary"
-          onClick={refreshFreeFollow}
-          disabled={freeFollowBusy}
-        >
-          {t(MESSAGE_KEYS.creatorFollowRetry)}
-        </Button>
+        <div>
+          <p role="status">{t(MESSAGE_KEYS.creatorFollowReadError)}</p>
+          <Button
+            variant="secondary"
+            onClick={refreshFreeFollow}
+            disabled={freeFollowBusy}
+          >
+            {t(MESSAGE_KEYS.creatorFollowRetry)}
+          </Button>
+        </div>
       );
     if (freeFollowNeedsRead)
       return (
@@ -720,6 +825,12 @@ export function SubscribeButton({
           disabled={freeFollowBusy}
         >
           {t(MESSAGE_KEYS.creatorFollowRetry)}
+        </Button>
+      );
+    if (freeFollowing === null)
+      return (
+        <Button variant="secondary" disabled>
+          {t(MESSAGE_KEYS.creatorFollowLoading)}
         </Button>
       );
     return (
@@ -732,7 +843,7 @@ export function SubscribeButton({
         aria-label={
           freeFollowing
             ? t(MESSAGE_KEYS.creatorFollowUnfollow, { name })
-            : `${t(MESSAGE_KEYS.creatorFollowAction)} ${name}`
+            : t(MESSAGE_KEYS.creatorFollowAccessible, { name })
         }
       >
         {freeFollowBusy ? (
@@ -765,8 +876,8 @@ export function SubscribeButton({
             <DialogTitle>Your membership to {name}</DialogTitle>
             <DialogDescription>
               {renewing
-                ? "Unlocks subscriber posts and livestreams. Renews automatically each month."
-                : "Auto-renew is off — you'll keep access until it expires."}
+                ? "Includes subscriber posts and livestreams. Auto-renew is enabled, subject to your renewal ceiling and account balance."
+                : "Auto-renew is off. You keep access until it expires. Extending purchases another 30 days at the current price and does not change auto-renew."}
             </DialogDescription>
           </DialogHeader>
 
@@ -813,18 +924,18 @@ export function SubscribeButton({
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                 ) : null}
-                Cancel membership
+                Cancel auto-renew
               </Button>
             ) : gate === "ready" ? (
               <Button
-                onClick={resumeRenewal}
+                onClick={extendMembership}
                 disabled={busy}
-                aria-label={`Resume auto-renew for your ${name} membership`}
+                aria-label={`Extend your ${name} membership without changing auto-renew`}
               >
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                 ) : null}
-                Resume renewal
+                Extend membership
               </Button>
             ) : (
               <Button
@@ -856,8 +967,9 @@ export function SubscribeButton({
           <DialogTitle>Subscribe to {name}</DialogTitle>
           <DialogDescription>
             This is {name}'s membership price — what it costs you to become a
-            subscriber. It unlocks their subscriber posts and livestreams for 30
-            days.
+            subscriber. It gives access to their subscriber posts and
+            livestreams for 30 days. New memberships renew automatically up to
+            this price; existing memberships keep their renewal ceiling.
           </DialogDescription>
         </DialogHeader>
 

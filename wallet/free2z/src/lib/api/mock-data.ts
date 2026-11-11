@@ -115,7 +115,7 @@ export const mockCreators: SimpleCreator[] = [
     {
       is_verified: true,
       zpages: 24,
-      member_price: null,
+      member_price: 0,
       is_live: false, // Offline — demos is_live:false (button hidden).
     },
   ),
@@ -139,7 +139,7 @@ export const mockCreators: SimpleCreator[] = [
     "shielded_sam",
     "Antidisestablishmentarianismsam",
     "On-chain privacy, off-chain vibes.",
-    { zpages: 3, member_price: null },
+    { zpages: 3, member_price: 0 },
   ),
 ];
 
@@ -763,18 +763,41 @@ export const mockSubscriptions: Subscription[] = [
   },
 ];
 
-/** Per-account free follow graph, persisted for the lifetime of the mock session. */
+/** Per-account free follow graph, persisted across mock-mode page reloads. */
 const mockCreatorFollows = new Map<string, Set<string>>();
 export function mockCreatorFollow(
   username: string,
   action: "state" | "follow" | "unfollow",
+  actorName = mockUser.username,
 ): boolean {
-  const actor = mockUser.username.toLowerCase();
+  const actor = actorName.toLowerCase();
   const creator = username.toLowerCase();
-  const follows = mockCreatorFollows.get(actor) ?? new Set<string>();
+  const storageKey = `free2z.mock.creator-follows.${encodeURIComponent(actor)}`;
+  let follows = mockCreatorFollows.get(actor) ?? new Set<string>();
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored !== null) {
+      const parsed: unknown = JSON.parse(stored);
+      if (
+        Array.isArray(parsed) &&
+        parsed.every((value) => typeof value === "string")
+      ) {
+        follows = new Set(parsed);
+      }
+    }
+  } catch {
+    // Restricted storage keeps the in-memory mock state usable in this tab.
+  }
   if (action === "follow") follows.add(creator);
   if (action === "unfollow") follows.delete(creator);
   mockCreatorFollows.set(actor, follows);
+  if (action !== "state") {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify([...follows]));
+    } catch {
+      /* in-memory fallback */
+    }
+  }
   return follows.has(creator);
 }
 

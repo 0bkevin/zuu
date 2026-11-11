@@ -92,6 +92,8 @@ export const MESSAGE_KEYS = {
   creatorChatTrigger: "creator.chat.trigger",
   creatorChatTriggerAccessible: "creator.chat.triggerAccessible",
   creatorFollowAction: "creator.follow.action",
+  creatorFollowAccessible: "creator.follow.accessible",
+  creatorFollowLoading: "creator.follow.loading",
   creatorFollowFollowing: "creator.follow.following",
   creatorFollowUnfollow: "creator.follow.unfollow",
   creatorFollowRetry: "creator.follow.retry",

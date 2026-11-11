@@ -132,7 +132,9 @@
       "recorded": "El cambio de seguimiento gratuito se guardó, pero no se pudo actualizar el estado. Actualízalo antes de volver a cambiarlo.",
       "success": "Sigues a {name}. Es un seguimiento gratuito; no inicia una membresía ni renovación de pago.",
       "unfollowSuccess": "Dejaste de seguir a {name}. Es un seguimiento gratuito; no inicia una membresía ni renovación de pago.",
-      "unfollow": "Dejar de seguir a {name}"
+      "unfollow": "Dejar de seguir a {name}",
+      "accessible": "Seguir a {name}",
+      "loading": "Comprobando el seguimiento"
     }
   },
   "error": {

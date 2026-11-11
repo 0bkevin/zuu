@@ -132,7 +132,9 @@
       "recorded": "Your free follow change was recorded, but status could not be refreshed. Refresh status before making another change.",
       "success": "Following {name}. Free creator follow only; no paid membership or renewal started.",
       "unfollowSuccess": "Unfollowed {name}. Free creator follow only; no paid membership or renewal started.",
-      "unfollow": "Unfollow {name}"
+      "unfollow": "Unfollow {name}",
+      "accessible": "Follow {name}",
+      "loading": "Checking follow status"
     }
   },
   "error": {

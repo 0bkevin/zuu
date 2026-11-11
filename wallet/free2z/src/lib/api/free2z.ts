@@ -232,10 +232,14 @@ interface RawDyteMeeting {
 // ─── Mappers ────────────────────────────────────────────────────────────────
 
 /** Decimal money fields arrive as strings; parse to a whole 2Z or null. */
-function parsePrice(v: string | null | undefined): number | null {
-  if (v === null || v === undefined || v === "") return null;
+function parsePrice(v: unknown): number | null {
+  if (
+    typeof v !== "number" &&
+    (typeof v !== "string" || !/^(0|[1-9]\d*)(?:\.\d+)?$/.test(v))
+  )
+    return null;
   const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n) : null;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2046,12 +2050,13 @@ export const tuzi = {
   async creatorFollow(
     username: string,
     action: "state" | "follow" | "unfollow",
+    mockActor?: string,
   ): Promise<boolean> {
     if (useMock()) {
       await delay(100);
-      return mockCreatorFollow(username, action);
+      return mockCreatorFollow(username, action, mockActor);
     }
-    const response = await request<{ following: boolean }>(
+    const response = await request<unknown>(
       `/api/creator/${encodeURIComponent(username)}/follow/`,
       {
         method:
@@ -2059,7 +2064,12 @@ export const tuzi = {
         cache: "no-store",
       },
     );
-    if (typeof response?.following !== "boolean")
+    if (
+      !isRecord(response) ||
+      typeof response.following !== "boolean" ||
+      typeof response.username !== "string" ||
+      response.username.toLowerCase() !== username.toLowerCase()
+    )
       throw new Error("Invalid creator follow state.");
     return response.following;
   },
